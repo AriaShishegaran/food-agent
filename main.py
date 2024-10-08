@@ -1,4 +1,5 @@
 import os
+import traceback
 from dotenv import load_dotenv
 from crewai import Crew, Task
 from langchain_groq import ChatGroq
@@ -10,6 +11,7 @@ from rich.console import Console
 from rich.traceback import install
 from tools.database_handler import DatabaseHandler
 from models.task_outputs import SearchOutput, ContentOutput
+import litellm
 
 # Install rich traceback handler
 install(show_locals=True)
@@ -38,6 +40,8 @@ llm = ChatGroq(
     groq_api_key=GROQ_API_KEY,
     model_name="groq/llama-3.2-1b-preview")
 
+# Add this near the top of the file, after imports
+litellm.set_verbose = True
 
 # Initialize DatabaseHandler
 db_handler = DatabaseHandler(MONGODB_URI)
@@ -82,13 +86,23 @@ def process_user_input(terminal_ui):
 
 def execute_crew_tasks(recipe_crew, keywords):
     console.print("[bold green]Starting recipe search and content generation...[/bold green]")
-    return recipe_crew.kickoff(inputs={'keywords': keywords})
+    try:
+        result = recipe_crew.kickoff(inputs={'keywords': keywords})
+        return result
+    except Exception as e:
+        console.print(f"[bold red]Error during crew execution: {str(e)}[/bold red]")
+        console.print(traceback.format_exc())
+        return None
 
 def validate_outputs(result):
     try:
-        search_output = SearchOutput(**result.tasks_output[0].output)
-        content_output = ContentOutput(**result.tasks_output[1].output)
+        search_output = SearchOutput(recipes=result.tasks_output[0].result)
+        content_output = ContentOutput(**result.tasks_output[1].result)
         return search_output, content_output
+    except AttributeError as e:
+        console.print(f"[bold red]Attribute error in output validation: {str(e)}[/bold red]")
+        console.print(f"Task output structure: {result.tasks_output}")
+        return None, None
     except Exception as e:
         console.print(f"[bold red]Output validation failed: {str(e)}[/bold red]")
         return None, None
@@ -102,18 +116,16 @@ def save_to_mongodb(db_handler, keywords, result):
                 {
                     "description": task.description,
                     "agent": task.agent.name,
-                    "output": task.output
+                    "result": task.result
                 } for task in result.tasks_output
             ],
-            "token_usage": {
-                "total_tokens": result.token_usage.total_tokens,
-                "prompt_tokens": result.token_usage.prompt_tokens,
-                "completion_tokens": result.token_usage.completion_tokens,
-                "successful_requests": result.token_usage.successful_requests
-            }
+            "token_usage": result.token_usage.dict() if result.token_usage else {}
         }
         db_handler.recipes_collection.insert_one(recipe_document)
         console.print(f"[bold green]Generated and saved recipe content for '{keywords}'[/bold green]")
+    except AttributeError as e:
+        console.print(f"[bold red]Attribute error while saving to MongoDB: {str(e)}[/bold red]")
+        console.print(f"Result structure: {result}")
     except Exception as e:
         console.print(f"[bold red]Failed to save to MongoDB: {str(e)}[/bold red]")
 
@@ -132,6 +144,9 @@ def main():
 
         for keywords in process_user_input(terminal_ui):
             result = execute_crew_tasks(recipe_crew, keywords)
+            if result is None:
+                continue
+
             console.log(f"[bold blue]Raw Output: {result.raw}[/bold blue]")
 
             search_output, content_output = validate_outputs(result)

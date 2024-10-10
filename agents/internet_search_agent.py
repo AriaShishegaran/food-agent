@@ -52,7 +52,9 @@ class InternetSearchAgent:
         except json.JSONDecodeError as e:
             console.print(f"[bold red]Failed to parse JSON: {str(e)}[/bold red]")
             console.print(f"Raw response: {response}")
-            raise
+            # Return a default SearchOutput with an empty list of recipes
+            return SearchOutput(recipes=[])
         except Exception as e:
             console.print(f"[bold red]Failed to process search results: {str(e)}[/bold red]")
-            raise
+            # Return a default SearchOutput with an empty list of recipes
+            return SearchOutput(recipes=[])

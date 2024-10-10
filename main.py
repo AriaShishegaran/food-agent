@@ -96,8 +96,8 @@ def execute_crew_tasks(recipe_crew, keywords):
 
 def validate_outputs(result):
     try:
-        search_output = SearchOutput(recipes=result.tasks_output[0].result)
-        content_output = ContentOutput(**result.tasks_output[1].result)
+        search_output = result.tasks_output[0].output
+        content_output = result.tasks_output[1].output
         return search_output, content_output
     except AttributeError as e:
         console.print(f"[bold red]Attribute error in output validation: {str(e)}[/bold red]")
@@ -116,7 +116,7 @@ def save_to_mongodb(db_handler, keywords, result):
                 {
                     "description": task.description,
                     "agent": task.agent.name,
-                    "result": task.result
+                    "result": task.output.dict() if hasattr(task.output, 'dict') else task.output
                 } for task in result.tasks_output
             ],
             "token_usage": result.token_usage.dict() if result.token_usage else {}
@@ -150,7 +150,8 @@ def main():
             console.log(f"[bold blue]Raw Output: {result.raw}[/bold blue]")
 
             search_output, content_output = validate_outputs(result)
-            if not search_output or not content_output:
+            if search_output is None or content_output is None:
+                console.print("[bold red]Failed to validate outputs. Skipping this iteration.[/bold red]")
                 continue
 
             save_to_mongodb(db_handler, keywords, result)

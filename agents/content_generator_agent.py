@@ -49,7 +49,21 @@ class ContentGeneratorAgent:
         except json.JSONDecodeError as e:
             console.print(f"[bold red]Failed to parse JSON: {str(e)}[/bold red]")
             console.print(f"Raw response: {response}")
-            raise
+            # Return a default ContentOutput
+            return ContentOutput(
+                title=f"Recipe for {keywords}",
+                introduction="Unable to generate content",
+                ingredients=[],
+                instructions=[],
+                seo_optimized_text="Default SEO text"
+            )
         except Exception as e:
             console.print(f"[bold red]Failed to process content generation results: {str(e)}[/bold red]")
-            raise
+            # Return a default ContentOutput
+            return ContentOutput(
+                title=f"Recipe for {keywords}",
+                introduction="Unable to generate content",
+                ingredients=[],
+                instructions=[],
+                seo_optimized_text="Default SEO text"
+            )

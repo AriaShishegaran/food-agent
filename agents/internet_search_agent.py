@@ -8,8 +8,9 @@ import json
 console = Console()
 
 class InternetSearchAgent:
-    def __init__(self, llm):
+    def __init__(self, llm, max_results=1):
         self.search_tool = SerperDevTool(api_key=SERPER_API_KEY)
+        self.max_results = max_results
         self.agent = Agent(
             name="Internet Researcher",
             role='Internet Researcher',
@@ -23,10 +24,18 @@ class InternetSearchAgent:
     def search_recipes(self, keywords):
         console.log(f"[bold blue]Searching for recipes with keywords: {keywords}[/bold blue]")
         task = f"""
-        Your task is to search for recipes related to '{keywords}'. Follow these steps:
+        Your task is to search for recipes related to '{keywords}'. Follow these steps precisely:
         1. Use the search tool to find relevant recipes.
-        2. For each recipe, extract the title, ingredients, instructions, and source URL.
-        3. Format the information as a JSON string with the following structure:
+        2. Extract information for the top {self.max_results} recipe(s).
+        3. For each recipe, extract the title, ingredients, instructions, and source URL.
+        4. Format the information exactly as shown below:
+
+        Thought: [Your thought process here]
+        Action: [The action you are taking]
+        Action Input: [Input for the action]
+        ```
+
+        ```json
         {{
             "recipes": [
                 {{
@@ -34,12 +43,12 @@ class InternetSearchAgent:
                     "ingredients": ["ingredient1", "ingredient2", ...],
                     "instructions": ["step1", "step2", ...],
                     "source": "URL of the recipe"
-                }},
-                ...
+                }}
             ]
         }}
-        4. Include at least 3 recipes in your response.
-        5. Ensure all recipes are well-reviewed and from reputable sources.
+        ```
+        
+        5. Ensure the JSON is valid and adhere strictly to the structure.
         6. Do not include any additional text or explanations outside of the JSON structure.
         """
         response = self.agent.execute(task)
@@ -52,9 +61,7 @@ class InternetSearchAgent:
         except json.JSONDecodeError as e:
             console.print(f"[bold red]Failed to parse JSON: {str(e)}[/bold red]")
             console.print(f"Raw response: {response}")
-            # Return a default SearchOutput with an empty list of recipes
             return SearchOutput(recipes=[])
         except Exception as e:
             console.print(f"[bold red]Failed to process search results: {str(e)}[/bold red]")
-            # Return a default SearchOutput with an empty list of recipes
             return SearchOutput(recipes=[])

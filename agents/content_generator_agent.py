@@ -38,6 +38,7 @@ class ContentGeneratorAgent:
         3. Ensure the content is well-structured, easy to read, and optimized for search engines.
         4. The content should be relevant to '{keywords}'.
         5. Do not include any additional text or explanations outside of the JSON structure.
+        6. Ensure that all JSON fields are present, even if some are empty strings.
         """
         response = self.agent.execute(task)
 
@@ -49,21 +50,17 @@ class ContentGeneratorAgent:
         except json.JSONDecodeError as e:
             console.print(f"[bold red]Failed to parse JSON: {str(e)}[/bold red]")
             console.print(f"Raw response: {response}")
-            # Return a default ContentOutput
-            return ContentOutput(
-                title=f"Recipe for {keywords}",
-                introduction="Unable to generate content",
-                ingredients=[],
-                instructions=[],
-                seo_optimized_text="Default SEO text"
-            )
         except Exception as e:
             console.print(f"[bold red]Failed to process content generation results: {str(e)}[/bold red]")
-            # Return a default ContentOutput
-            return ContentOutput(
-                title=f"Recipe for {keywords}",
-                introduction="Unable to generate content",
-                ingredients=[],
-                instructions=[],
-                seo_optimized_text="Default SEO text"
-            )
+
+        # Return a default ContentOutput if parsing fails
+        return ContentOutput(
+            title=f"Recipe for {keywords}",
+            introduction="Unable to generate content",
+            ingredients=[],
+            instructions=[],
+            nutritional_info="",
+            tips_and_variations="",
+            conclusion="",
+            seo_optimized_text="Default SEO text"
+        )

@@ -21,8 +21,9 @@ class TerminalUI:
     def get_user_input(self, prompt):
         return self.console.input(f"[bold cyan]{prompt}[/bold cyan]")
 
-    def display_result(self, content: ContentOutput):
-        markdown_content = f"""# {content.title}
+    def display_result(self, content):
+        if isinstance(content, ContentOutput):
+            markdown_content = f"""# {content.title}
 
 ## Introduction
 {content.introduction}
@@ -35,6 +36,12 @@ class TerminalUI:
 
 ## SEO Optimization
 {content.seo_optimized_text}
+"""
+        else:
+            # Fallback for TaskOutput or other types
+            markdown_content = f"""# Recipe Result
+
+{str(content)}
 """
         self.console.print(Markdown(markdown_content))
 

@@ -1,5 +1,6 @@
 import os
 import traceback
+import logging
 from dotenv import load_dotenv
 from crewai import Crew, Task
 from langchain_groq import ChatGroq
@@ -12,9 +13,30 @@ from rich.traceback import install
 from tools.database_handler import DatabaseHandler
 from models.task_outputs import SearchOutput, ContentOutput
 import litellm
+from litellm.exceptions import OpenAIError
+import warnings
+import re
+import json
 
-# Install rich traceback handler
+# Configure rich traceback handler
 install(show_locals=True)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("app.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Suppress specific SageMaker INFO warnings
+warnings.filterwarnings("ignore", message="Not applying SDK defaults from location:.*")
+
+# Initialize LiteLLM
+litellm.set_verbose = False  # Set to True for debugging
 
 # Initialize rich console
 console = Console()
@@ -29,28 +51,43 @@ def check_environment_variables():
         "SERPER_API_KEY": SERPER_API_KEY,
         "MONGODB_URI": MONGODB_URI
     }
-    for var_name, var_value in required_vars.items():
-        if not var_value:
-            console.print(f"[bold red]Error: {var_name} is not set in the environment variables.[/bold red]")
-            exit(1)
+    missing_vars = [var for var, value in required_vars.items() if not value]
+    if missing_vars:
+        logger.error(f"Missing environment variables: {', '.join(missing_vars)}")
+        exit(1)
 
 check_environment_variables()
 
-llm = ChatGroq(
-    groq_api_key=GROQ_API_KEY,
-    model_name="groq/llama-3.2-1b-preview")
+# Initialize LLM
+def initialize_llm():
+    try:
+        return ChatGroq(
+            groq_api_key=GROQ_API_KEY,
+            model_name="groq/llama-3.1-8b-instant"
+        )
+    except OpenAIError as e:
+        logger.error(f"Failed to initialize LLM: {e.message} ([{e.status_code}]) from provider {e.llm_provider}")
+        exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error initializing LLM: {str(e)}", exc_info=True)
+        exit(1)
 
-# Add this near the top of the file, after imports
-litellm.set_verbose = True
+llm = initialize_llm()
 
 # Initialize DatabaseHandler
-db_handler = DatabaseHandler(MONGODB_URI)
+try:
+    db_handler = DatabaseHandler(MONGODB_URI)
+except Exception as e:
+    logger.error(f"Database connection failed: {str(e)}")
+    exit(1)
 
 # Initialize agents
 def initialize_agents(llm):
-    internet_search_agent = InternetSearchAgent(llm=llm)
+    internet_search_agent = InternetSearchAgent(llm=llm, max_results=1)  # You can adjust the max_results as needed
     content_generator_agent = ContentGeneratorAgent(llm=llm)
     return internet_search_agent, content_generator_agent
+
+agents = initialize_agents(llm)
 
 # Create the crew with Pydantic output models
 def create_recipe_crew(agents):
@@ -74,6 +111,8 @@ def create_recipe_crew(agents):
         verbose=True
     )
 
+recipe_crew = create_recipe_crew(agents)
+
 # Initialize terminal UI
 terminal_ui = TerminalUI()
 
@@ -84,62 +123,82 @@ def process_user_input(terminal_ui):
             break
         yield keywords
 
+def parse_llm_response(response):
+    try:
+        # Try to parse the entire response as JSON first
+        return json.loads(response)
+    except json.JSONDecodeError:
+        # If that fails, try to find a JSON block
+        json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                logger.error("Found JSON block, but it's invalid.")
+        else:
+            logger.error("JSON block not found in the response.")
+        
+        # If all parsing attempts fail, return the raw response
+        logger.warning("Returning raw response as fallback.")
+        return {"raw_response": response}
+
 def execute_crew_tasks(recipe_crew, keywords):
-    console.print("[bold green]Starting recipe search and content generation...[/bold green]")
+    logger.info("Starting recipe search and content generation...")
     try:
         result = recipe_crew.kickoff(inputs={'keywords': keywords})
-        return result
+        parsed_result = parse_llm_response(result.raw)
+        if parsed_result is None:
+            logger.error("Failed to parse LLM response. Using raw output.")
+            return {'raw': result.raw, 'tasks_output': result.tasks_output}
+        return {'raw': result.raw, 'tasks_output': result.tasks_output, 'parsed': parsed_result}
+    except OpenAIError as e:
+        logger.error(f"LiteLLM Error: {e.message} ([{e.status_code}]) from provider {e.llm_provider}")
+        return None
     except Exception as e:
-        console.print(f"[bold red]Error during crew execution: {str(e)}[/bold red]")
-        console.print(traceback.format_exc())
+        logger.error(f"Unexpected Error during crew execution: {str(e)}", exc_info=True)
         return None
 
 def validate_outputs(result):
     try:
-        search_output = result.tasks_output[0].output
-        content_output = result.tasks_output[1].output
+        if isinstance(result, list) and len(result) >= 2:
+            search_output = result[0].output if hasattr(result[0], 'output') else result[0]
+            content_output = result[1].output if hasattr(result[1], 'output') else result[1]
+        elif isinstance(result, dict) and 'tasks_output' in result:
+            search_output = result['tasks_output'][0].output
+            content_output = result['tasks_output'][1].output
+        else:
+            raise ValueError("Unexpected result structure")
         return search_output, content_output
-    except AttributeError as e:
-        console.print(f"[bold red]Attribute error in output validation: {str(e)}[/bold red]")
-        console.print(f"Task output structure: {result.tasks_output}")
+    except (AttributeError, IndexError, KeyError) as e:
+        logger.error(f"Error in output validation: {str(e)}")
+        logger.debug(f"Result structure: {result}")
         return None, None
     except Exception as e:
-        console.print(f"[bold red]Output validation failed: {str(e)}[/bold red]")
+        logger.error(f"Output validation failed: {str(e)}")
         return None, None
 
 def save_to_mongodb(db_handler, keywords, result):
     try:
         recipe_document = {
             "keywords": keywords,
-            "raw_output": result.raw,
+            "raw_output": result.get('raw', ''),
             "tasks_output": [
                 {
-                    "description": task.description,
-                    "agent": task.agent.name,
-                    "result": task.output.dict() if hasattr(task.output, 'dict') else task.output
-                } for task in result.tasks_output
+                    "description": getattr(task, 'description', ''),
+                    "agent": getattr(getattr(task, 'agent', None), 'name', ''),
+                    "result": task.output.dict() if hasattr(task.output, 'dict') else str(task.output)
+                } for task in result.get('tasks_output', [])
             ],
-            "token_usage": result.token_usage.dict() if result.token_usage else {}
+            "token_usage": result.get('token_usage', {})
         }
         db_handler.recipes_collection.insert_one(recipe_document)
-        console.print(f"[bold green]Generated and saved recipe content for '{keywords}'[/bold green]")
-    except AttributeError as e:
-        console.print(f"[bold red]Attribute error while saving to MongoDB: {str(e)}[/bold red]")
-        console.print(f"Result structure: {result}")
+        logger.info(f"Generated and saved recipe content for '{keywords}'")
     except Exception as e:
-        console.print(f"[bold red]Failed to save to MongoDB: {str(e)}[/bold red]")
+        logger.error(f"Failed to save to MongoDB: {str(e)}")
+        logger.debug(f"Result structure: {result}")
 
 def main():
     try:
-        load_dotenv()
-        check_environment_variables()
-
-        llm = ChatGroq(groq_api_key=GROQ_API_KEY, model_name="groq/llama-3.2-1b-preview")
-        db_handler = DatabaseHandler(MONGODB_URI)
-        agents = initialize_agents(llm)
-        recipe_crew = create_recipe_crew(agents)
-        terminal_ui = TerminalUI()
-
         terminal_ui.display_welcome_message()
 
         for keywords in process_user_input(terminal_ui):
@@ -147,11 +206,11 @@ def main():
             if result is None:
                 continue
 
-            console.log(f"[bold blue]Raw Output: {result.raw}[/bold blue]")
+            logger.info(f"Raw Output: {result['raw']}")
 
-            search_output, content_output = validate_outputs(result)
-            if search_output is None or content_output is None:
-                console.print("[bold red]Failed to validate outputs. Skipping this iteration.[/bold red]")
+            search_output, content_output = validate_outputs(result.get('tasks_output', []))
+            if search_output is None and content_output is None:
+                logger.error("Failed to validate outputs. Skipping this iteration.")
                 continue
 
             save_to_mongodb(db_handler, keywords, result)
@@ -159,11 +218,14 @@ def main():
 
         terminal_ui.display_goodbye_message()
     except KeyboardInterrupt:
-        console.print("\n[bold yellow]Process interrupted by user. Exiting...[/bold yellow]")
+        logger.warning("Process interrupted by user. Exiting...")
+    except OpenAIError as e:
+        logger.error(f"LiteLLM Error: {e.message} ([{e.status_code}]) from provider {e.llm_provider}")
     except Exception as e:
-        console.print_exception(show_locals=True)
+        logger.error(f"An unexpected error occurred: {str(e)}", exc_info=True)
     finally:
         db_handler.close()
+        logger.info("MongoDB connection closed.")
 
 if __name__ == "__main__":
     main()

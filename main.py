@@ -1,7 +1,7 @@
 import os
 import traceback
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Generator
 from dotenv import load_dotenv
 from crewai import Crew, Task
 from langchain_groq import ChatGroq
@@ -18,6 +18,8 @@ from litellm.exceptions import OpenAIError
 import warnings
 import re
 import json
+import signal
+import sys
 
 # Configure rich traceback handler
 install(show_locals=True)
@@ -44,6 +46,26 @@ console = Console()
 
 # Load environment variables
 load_dotenv()
+
+# Add this global variable at the top of the file, after other imports
+db_connection_closed = False
+
+def graceful_shutdown(signum, frame):
+    global db_handler, db_connection_closed
+    if not db_connection_closed:
+        console.print("\n[bold yellow]Received termination signal. Shutting down gracefully...[/bold yellow]")
+        if db_handler:
+            try:
+                db_handler.close()
+                db_connection_closed = True
+                console.print("[bold green]MongoDB connection closed successfully.[/bold green]")
+            except Exception as e:
+                console.print(f"[bold red]Error closing MongoDB connection: {str(e)}[/bold red]")
+        else:
+            console.print("[bold yellow]No active MongoDB connection to close.[/bold yellow]")
+        
+        console.print("[bold blue]Thank you for using the Recipe Content Generator. Goodbye![/bold blue]")
+    sys.exit(0)
 
 def check_environment_variables() -> None:
     """
@@ -125,7 +147,7 @@ def create_recipe_crew(agents: List[Any]) -> Crew:
         verbose=True
     )
 
-def process_user_input(terminal_ui: TerminalUI) -> str:
+def process_user_input(terminal_ui: TerminalUI) -> Generator[str, None, None]:
     """
     Process user input for recipe keywords.
 
@@ -252,7 +274,13 @@ def main() -> None:
     """
     Main function to run the recipe content generation process.
     """
+    global db_handler, db_connection_closed
+    db_handler = None
     try:
+        # Set up signal handlers
+        signal.signal(signal.SIGINT, graceful_shutdown)
+        signal.signal(signal.SIGTERM, graceful_shutdown)
+
         check_environment_variables()
         llm = initialize_llm()
         db_handler = DatabaseHandler(MONGODB_URI)
@@ -277,16 +305,15 @@ def main() -> None:
             save_to_mongodb(db_handler, keywords, result)
             terminal_ui.display_result(content_output)
 
-        terminal_ui.display_goodbye_message()
-    except KeyboardInterrupt:
-        logger.warning("Process interrupted by user. Exiting...")
     except OpenAIError as e:
         logger.error(f"LiteLLM Error: {e.message} ([{e.status_code}]) from provider {e.llm_provider}")
     except Exception as e:
         logger.error(f"An unexpected error occurred: {str(e)}", exc_info=True)
     finally:
-        db_handler.close()
-        logger.info("MongoDB connection closed.")
+        if db_handler and not db_connection_closed:
+            db_handler.close()
+            db_connection_closed = True
+            logger.info("MongoDB connection closed.")
 
 if __name__ == "__main__":
     main()

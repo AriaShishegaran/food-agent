@@ -14,9 +14,11 @@ class TerminalUI:
         self.console = Console()
     
     def display_welcome_message(self):
-        self.console.print("╭─────────────────────────────── Recipe Content Generator ──────────────╮", style="bold green")
-        self.console.print("│ Welcome to the AI-powered Recipe Content Generator!                             │", style="bold green")
-        self.console.print("╰────────────────────────────────────────────────────────────────────────────╯", style="bold green")
+        message = "Welcome to the AI-powered Recipe Content Generator!"
+        border = "═" * (len(message) + 4)
+        self.console.print(f"╔{border}╗", style="bold green")
+        self.console.print(f"║ {message} ║", style="bold green")
+        self.console.print(f"╚{border}╝", style="bold green")
 
     def get_user_input(self, prompt):
         return self.console.input(f"[bold cyan]{prompt}[/bold cyan]")
@@ -75,3 +77,7 @@ class TerminalUI:
 
     def display_goodbye_message(self):
         self.console.print("\nThank you for using the Recipe Content Generator. Goodbye!", style="bold green")
+
+    def display_shutdown_message(self):
+        self.console.print("\n[bold yellow]Shutting down gracefully...[/bold yellow]")
+        self.console.print("[bold green]Thank you for using the Recipe Content Generator. Goodbye![/bold green]")

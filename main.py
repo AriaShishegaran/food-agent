@@ -1,6 +1,7 @@
 import os
 import traceback
 import logging
+from typing import List, Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
 from crewai import Crew, Task
 from langchain_groq import ChatGroq
@@ -44,8 +45,10 @@ console = Console()
 # Load environment variables
 load_dotenv()
 
-# Check for required environment variables
-def check_environment_variables():
+def check_environment_variables() -> None:
+    """
+    Check for required environment variables and exit if any are missing.
+    """
     required_vars = {
         "GROQ_API_KEY": GROQ_API_KEY,
         "SERPER_API_KEY": SERPER_API_KEY,
@@ -56,10 +59,16 @@ def check_environment_variables():
         logger.error(f"Missing environment variables: {', '.join(missing_vars)}")
         exit(1)
 
-check_environment_variables()
+def initialize_llm() -> ChatGroq:
+    """
+    Initialize and return the Language Model.
 
-# Initialize LLM
-def initialize_llm():
+    Returns:
+        ChatGroq: Initialized Language Model.
+
+    Raises:
+        SystemExit: If LLM initialization fails.
+    """
     try:
         return ChatGroq(
             groq_api_key=GROQ_API_KEY,
@@ -72,25 +81,30 @@ def initialize_llm():
         logger.error(f"Unexpected error initializing LLM: {str(e)}", exc_info=True)
         exit(1)
 
-llm = initialize_llm()
+def initialize_agents(llm: ChatGroq) -> List[Any]:
+    """
+    Initialize and return the agents.
 
-# Initialize DatabaseHandler
-try:
-    db_handler = DatabaseHandler(MONGODB_URI)
-except Exception as e:
-    logger.error(f"Database connection failed: {str(e)}")
-    exit(1)
+    Args:
+        llm (ChatGroq): The Language Model to use for the agents.
 
-# Initialize agents
-def initialize_agents(llm):
-    internet_search_agent = InternetSearchAgent(llm=llm, max_results=1)  # You can adjust the max_results as needed
+    Returns:
+        List[Any]: List of initialized agents.
+    """
+    internet_search_agent = InternetSearchAgent(llm=llm, max_results=1)
     content_generator_agent = ContentGeneratorAgent(llm=llm)
-    return internet_search_agent, content_generator_agent
+    return [internet_search_agent, content_generator_agent]
 
-agents = initialize_agents(llm)
+def create_recipe_crew(agents: List[Any]) -> Crew:
+    """
+    Create and return the recipe crew.
 
-# Create the crew with Pydantic output models
-def create_recipe_crew(agents):
+    Args:
+        agents (List[Any]): List of agents to include in the crew.
+
+    Returns:
+        Crew: The created recipe crew.
+    """
     return Crew(
         agents=[agent.agent for agent in agents],
         tasks=[
@@ -111,24 +125,35 @@ def create_recipe_crew(agents):
         verbose=True
     )
 
-recipe_crew = create_recipe_crew(agents)
+def process_user_input(terminal_ui: TerminalUI) -> str:
+    """
+    Process user input for recipe keywords.
 
-# Initialize terminal UI
-terminal_ui = TerminalUI()
+    Args:
+        terminal_ui (TerminalUI): The terminal UI object.
 
-def process_user_input(terminal_ui):
+    Yields:
+        str: User input keywords.
+    """
     while True:
         keywords = terminal_ui.get_user_input("Enter recipe keywords (or 'quit' to exit): ")
         if keywords.lower() == 'quit':
             break
         yield keywords
 
-def parse_llm_response(response):
+def parse_llm_response(response: str) -> Dict[str, Any]:
+    """
+    Parse the LLM response and extract JSON data.
+
+    Args:
+        response (str): The raw LLM response.
+
+    Returns:
+        Dict[str, Any]: Parsed JSON data or raw response.
+    """
     try:
-        # Try to parse the entire response as JSON first
         return json.loads(response)
     except json.JSONDecodeError:
-        # If that fails, try to find a JSON block
         json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)
         if json_match:
             try:
@@ -138,11 +163,20 @@ def parse_llm_response(response):
         else:
             logger.error("JSON block not found in the response.")
         
-        # If all parsing attempts fail, return the raw response
         logger.warning("Returning raw response as fallback.")
         return {"raw_response": response}
 
-def execute_crew_tasks(recipe_crew, keywords):
+def execute_crew_tasks(recipe_crew: Crew, keywords: str) -> Optional[Dict[str, Any]]:
+    """
+    Execute crew tasks for recipe search and content generation.
+
+    Args:
+        recipe_crew (Crew): The recipe crew object.
+        keywords (str): The search keywords.
+
+    Returns:
+        Optional[Dict[str, Any]]: The execution result or None if an error occurred.
+    """
     logger.info("Starting recipe search and content generation...")
     try:
         result = recipe_crew.kickoff(inputs={'keywords': keywords})
@@ -158,7 +192,16 @@ def execute_crew_tasks(recipe_crew, keywords):
         logger.error(f"Unexpected Error during crew execution: {str(e)}", exc_info=True)
         return None
 
-def validate_outputs(result):
+def validate_outputs(result: Any) -> Tuple[Optional[Any], Optional[Any]]:
+    """
+    Validate the outputs from the crew execution.
+
+    Args:
+        result (Any): The result from crew execution.
+
+    Returns:
+        Tuple[Optional[Any], Optional[Any]]: Validated search and content outputs.
+    """
     try:
         if isinstance(result, list) and len(result) >= 2:
             search_output = result[0].output if hasattr(result[0], 'output') else result[0]
@@ -177,7 +220,15 @@ def validate_outputs(result):
         logger.error(f"Output validation failed: {str(e)}")
         return None, None
 
-def save_to_mongodb(db_handler, keywords, result):
+def save_to_mongodb(db_handler: DatabaseHandler, keywords: str, result: Dict[str, Any]) -> None:
+    """
+    Save the generated recipe content to MongoDB.
+
+    Args:
+        db_handler (DatabaseHandler): The database handler object.
+        keywords (str): The search keywords.
+        result (Dict[str, Any]): The result to be saved.
+    """
     try:
         recipe_document = {
             "keywords": keywords,
@@ -197,8 +248,18 @@ def save_to_mongodb(db_handler, keywords, result):
         logger.error(f"Failed to save to MongoDB: {str(e)}")
         logger.debug(f"Result structure: {result}")
 
-def main():
+def main() -> None:
+    """
+    Main function to run the recipe content generation process.
+    """
     try:
+        check_environment_variables()
+        llm = initialize_llm()
+        db_handler = DatabaseHandler(MONGODB_URI)
+        agents = initialize_agents(llm)
+        recipe_crew = create_recipe_crew(agents)
+        terminal_ui = TerminalUI()
+
         terminal_ui.display_welcome_message()
 
         for keywords in process_user_input(terminal_ui):

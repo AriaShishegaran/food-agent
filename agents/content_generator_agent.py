@@ -1,12 +1,23 @@
+from typing import Any
 from crewai import Agent
 import json
-from models.task_outputs import ContentOutput
+from models.task_outputs import ContentOutput, SearchOutput
 from rich.console import Console
 
 console = Console()
 
 class ContentGeneratorAgent:
-    def __init__(self, llm):
+    """
+    Agent responsible for generating SEO-optimized food recipe content based on search results.
+    """
+
+    def __init__(self, llm: Any):
+        """
+        Initialize the ContentGeneratorAgent.
+
+        Args:
+            llm (Any): The language model to use for the agent.
+        """
         self.agent = Agent(
             name="Content Generator",
             role='Food Recipe Content Creator',
@@ -16,7 +27,17 @@ class ContentGeneratorAgent:
             verbose=True
         )
 
-    def generate_content(self, search_results, keywords):
+    def generate_content(self, search_results: SearchOutput, keywords: str) -> ContentOutput:
+        """
+        Generate SEO-optimized content based on search results and keywords.
+
+        Args:
+            search_results (SearchOutput): The search results containing recipes.
+            keywords (str): The keywords used for the search.
+
+        Returns:
+            ContentOutput: The generated content for the recipe.
+        """
         console.log(f"[bold blue]Generating content for keywords: {keywords}[/bold blue]")
         task = f"""
         Your task is to create an SEO-optimized food recipe article based on the following recipes for '{keywords}':

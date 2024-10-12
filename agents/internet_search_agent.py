@@ -1,3 +1,4 @@
+from typing import Any
 from crewai import Agent
 from crewai_tools import SerperDevTool
 from config.settings import SERPER_API_KEY
@@ -8,7 +9,18 @@ import json
 console = Console()
 
 class InternetSearchAgent:
-    def __init__(self, llm, max_results=1):
+    """
+    Agent responsible for searching the internet for recipes based on user keywords.
+    """
+
+    def __init__(self, llm: Any, max_results: int = 1):
+        """
+        Initialize the InternetSearchAgent.
+
+        Args:
+            llm (Any): The language model to use for the agent.
+            max_results (int): Maximum number of recipes to return.
+        """
         self.search_tool = SerperDevTool(api_key=SERPER_API_KEY)
         self.max_results = max_results
         self.agent = Agent(
@@ -21,7 +33,16 @@ class InternetSearchAgent:
             verbose=True
         )
 
-    def search_recipes(self, keywords):
+    def search_recipes(self, keywords: str) -> SearchOutput:
+        """
+        Search for recipes based on the given keywords.
+
+        Args:
+            keywords (str): The keywords to search for.
+
+        Returns:
+            SearchOutput: The search results containing recipes.
+        """
         console.log(f"[bold blue]Searching for recipes with keywords: {keywords}[/bold blue]")
         task = f"""
         Your task is to search for recipes related to '{keywords}'. Follow these steps precisely:
@@ -52,7 +73,7 @@ class InternetSearchAgent:
         6. Do not include any additional text or explanations outside of the JSON structure.
         """
         response = self.agent.execute(task)
-        
+
         try:
             recipes_data = json.loads(response)
             search_output = SearchOutput(**recipes_data)
